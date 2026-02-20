@@ -1,22 +1,16 @@
 pipeline {
   agent any
 
-  options {
-    timestamps()
-  }
+  options { timestamps() }
 
   stages {
     stage('Checkout') {
-      steps {
-        checkout scm
-      }
+      steps { checkout scm }
     }
 
     stage('Build Docker Image') {
       steps {
-        sh '''
-          docker build --no-cache -t myapp:latest .
-        '''
+        sh 'docker build --no-cache -t myapp:latest .'
       }
     }
 
@@ -31,19 +25,8 @@ pipeline {
 
     stage('Cleanup') {
       steps {
-        sh '''
-          docker image prune -f || true
-        '''
+        sh 'docker image prune -f || true'
       }
-    }
-  }
-
-  post {
-    success {
-      echo "✅ Build & Deploy completed successfully!"
-    }
-    failure {
-      echo "❌ Pipeline failed. Check console logs."
     }
   }
 }
