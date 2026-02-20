@@ -1,42 +1,50 @@
 #!/bin/bash
 set -e
 
+NET="cicd-net"
 IMAGE="myapp:latest"
 BLUE="myapp-blue"
 GREEN="myapp-green"
+NGINX="nginx-proxy"
 
-BLUE_PORT=8081
-GREEN_PORT=8082
+# Ensure docker network exists
+docker network inspect "$NET" >/dev/null 2>&1 || docker network create "$NET"
 
-ACTIVE=$(docker ps --format "{{.Names}}" | grep -E "^$BLUE$|^$GREEN$" || true)
+# Find current active container (blue or green)
+ACTIVE=$(docker ps --format "{{.Names}}" | grep -E "^(${BLUE}|${GREEN})$" || true)
 
 if [ "$ACTIVE" == "$BLUE" ]; then
   NEW="$GREEN"
-  NEW_PORT=$GREEN_PORT
   OLD="$BLUE"
 else
   NEW="$BLUE"
-  NEW_PORT=$BLUE_PORT
   OLD="$GREEN"
 fi
 
-echo "👉 Deploying $NEW on port $NEW_PORT"
+echo "👉 Deploying $NEW (image: $IMAGE)"
 
-docker rm -f $NEW || true
-docker run -d --name $NEW -p $NEW_PORT:80 $IMAGE
+# Start NEW container
+docker rm -f "$NEW" >/dev/null 2>&1 || true
+docker run -d --name "$NEW" --network "$NET" "$IMAGE"
 
-echo "✅ Running health check..."
-sleep 3
-curl -f http://localhost:$NEW_PORT >/dev/null
+# Health check NEW container (inside container)
+echo "✅ Health check $NEW..."
+sleep 2
+docker exec "$NEW" wget -qO- http://localhost >/dev/null
 
-echo "🔁 Updating Nginx upstream to $NEW_PORT"
-sed -i "s/server 127.0.0.1:[0-9]\+/server 127.0.0.1:$NEW_PORT/" nginx.conf
+# Update nginx.conf to point to NEW container name
+echo "🔁 Updating nginx upstream -> $NEW"
+sed "s/APP_UPSTREAM/${NEW}/g" nginx.conf > nginx.runtime.conf
 
-echo "♻ Reloading Nginx container"
-docker rm -f nginx-proxy || true
-docker run -d --name nginx-proxy -p 80:80 -v $(pwd)/nginx.conf:/etc/nginx/nginx.conf:ro nginx:alpine
+# Restart nginx-proxy with updated config (most reliable)
+docker rm -f "$NGINX" >/dev/null 2>&1 || true
+docker run -d --name "$NGINX" --network "$NET" -p 80:80 \
+  -v "$(pwd)/nginx.runtime.conf:/etc/nginx/nginx.conf:ro" nginx:alpine
 
-echo "🧹 Stopping old container: $OLD"
-docker rm -f $OLD || true
+# Remove OLD container
+if [ -n "$OLD" ]; then
+  echo "🧹 Removing old container: $OLD"
+  docker rm -f "$OLD" >/dev/null 2>&1 || true
+fi
 
-echo "🎉 Deployment Successful! Live on http://SERVER_PUBLIC_IP/"
+echo "🎉 Deployment done! (Active: $NEW)"
