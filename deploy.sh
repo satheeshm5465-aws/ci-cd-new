@@ -1,3 +1,4 @@
+cat > deploy.sh <<'EOF'
 #!/bin/bash
 set -e
 
@@ -27,16 +28,16 @@ echo "👉 Deploying $NEW (image: $IMAGE)"
 docker rm -f "$NEW" >/dev/null 2>&1 || true
 docker run -d --name "$NEW" --network "$NET" "$IMAGE"
 
-# Health check NEW container (inside container)
+# Health check NEW container
 echo "✅ Health check $NEW..."
 sleep 2
 docker exec "$NEW" wget -qO- http://localhost >/dev/null
 
-# Update nginx.conf to point to NEW container name
+# Create runtime nginx config pointing to NEW container
 echo "🔁 Updating nginx upstream -> $NEW"
 sed "s/APP_UPSTREAM/${NEW}/g" nginx.conf > nginx.runtime.conf
 
-# Restart nginx-proxy with updated config (most reliable)
+# Restart nginx-proxy with updated config (reliable)
 docker rm -f "$NGINX" >/dev/null 2>&1 || true
 docker run -d --name "$NGINX" --network "$NET" -p 80:80 \
   -v "$(pwd)/nginx.runtime.conf:/etc/nginx/nginx.conf:ro" nginx:alpine
@@ -47,4 +48,7 @@ if [ -n "$OLD" ]; then
   docker rm -f "$OLD" >/dev/null 2>&1 || true
 fi
 
-echo "🎉 Deployment done! (Active: $NEW)"
+echo "🎉 Deployment done! Active: $NEW"
+EOF
+
+chmod +x deploy.sh
