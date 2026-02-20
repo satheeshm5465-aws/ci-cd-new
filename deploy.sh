@@ -8,10 +8,8 @@ BLUE="myapp-blue"
 GREEN="myapp-green"
 NGINX="nginx-proxy"
 
-# Ensure docker network exists
 docker network inspect "$NET" >/dev/null 2>&1 || docker network create "$NET"
 
-# Find current active container (blue or green)
 ACTIVE=$(docker ps --format "{{.Names}}" | grep -E "^(${BLUE}|${GREEN})$" || true)
 
 if [ "$ACTIVE" == "$BLUE" ]; then
@@ -22,33 +20,39 @@ else
   OLD="$GREEN"
 fi
 
-echo "👉 Deploying $NEW (image: $IMAGE)"
+echo "👉 Deploying $NEW"
 
-# Start NEW container
 docker rm -f "$NEW" >/dev/null 2>&1 || true
 docker run -d --name "$NEW" --network "$NET" "$IMAGE"
 
-# Health check NEW container
-echo "✅ Health check $NEW..."
+echo "✅ Health check..."
 sleep 2
 docker exec "$NEW" wget -qO- http://localhost >/dev/null
 
-# Create runtime nginx config pointing to NEW container
-echo "🔁 Updating nginx upstream -> $NEW"
-sed "s/APP_UPSTREAM/${NEW}/g" nginx.conf > nginx.runtime.conf
+cat > nginx.conf <<CONF
+events {}
 
-# Restart nginx-proxy with updated config (reliable)
+http {
+  upstream myapp {
+    server ${NEW}:80;
+  }
+
+  server {
+    listen 80;
+    location / {
+      proxy_pass http://myapp;
+    }
+  }
+}
+CONF
+
 docker rm -f "$NGINX" >/dev/null 2>&1 || true
 docker run -d --name "$NGINX" --network "$NET" -p 80:80 \
-  -v "$(pwd)/nginx.runtime.conf:/etc/nginx/nginx.conf:ro" nginx:alpine
+  -v "$(pwd)/nginx.conf:/etc/nginx/nginx.conf:ro" nginx:alpine
 
-# Remove OLD container
-if [ -n "$OLD" ]; then
-  echo "🧹 Removing old container: $OLD"
-  docker rm -f "$OLD" >/dev/null 2>&1 || true
-fi
+docker rm -f "$OLD" >/dev/null 2>&1 || true
 
-echo "🎉 Deployment done! Active: $NEW"
+echo "🎉 Done. Active = $NEW"
 EOF
 
 chmod +x deploy.sh
